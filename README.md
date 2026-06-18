@@ -26,15 +26,15 @@ services:
       - MASHUP_CHANNEL_IDS=1122334455,6677889900   # Comma-separated channel IDs to monitor
       
       # Database connection settings (Must match postgres block below)
-      - DB_HOST=mashup_postgres                    # Keep this as the service name
-      - DB_NAME=mashup_db                          # 1. Must match POSTGRES_DB
+      - DB_HOST=mashups_postgres                    # Keep this as the service name
+      - DB_NAME=mashups_db                          # 1. Must match POSTGRES_DB
       - DB_USER=postgres_user                      # 2. Must match POSTGRES_USER
       - DB_PASSWORD=your_secure_password           # 3. Must match POSTGRES_PASSWORD
 
-  mashup_postgres:
+  mashups_postgres:
     # ... (other configuration) ...
     environment:
-      - POSTGRES_DB=mashup_db                      # 1. Custom database name
+      - POSTGRES_DB=mashups_db                      # 1. Custom database name
       - POSTGRES_USER=postgres_user                # 2. Custom database admin user
       - POSTGRES_PASSWORD=your_secure_password     # 3. Secure database password
 
