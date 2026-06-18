@@ -12,21 +12,35 @@ This project is fully containerized using Docker Compose, allowing you to deploy
 Make sure you have [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/) installed on your host machine.
 
 ### 2. Configuration
-Clone this repository to your server, then open the `docker-compose.yml` file. You will need to replace the placeholder values in the environment blocks with your own configuration:
+Clone this repository to your server, then open the `docker-compose.yml` file. You will need to configure the environment blocks for **both** services. 
+
+Here is how the environment variables should look:
 
 ```yaml
+services:
+  mashup_bot:
+    # ... (other configuration) ...
     environment:
       - DISCORD_TOKEN=your_bot_token_here          # From Discord Developer Portal
       - OWNER_DISCORD_IDS=123456789,987654321      # Comma-separated admin user IDs
       - MASHUP_CHANNEL_IDS=1122334455,6677889900   # Comma-separated channel IDs to monitor
-      - DB_HOST=mashup_postgres                    # Keep as service name
-      - DB_NAME=mashup_db                          # Must match POSTGRES_DB below
-      - DB_USER=postgres                           # Must match POSTGRES_USER below
-      - DB_PASSWORD=your_secure_password           # Must match POSTGRES_PASSWORD below
+      
+      # Database connection settings (Must match postgres block below)
+      - DB_HOST=mashup_postgres                    # Keep this as the service name
+      - DB_NAME=mashup_db                          # 1. Must match POSTGRES_DB
+      - DB_USER=postgres_user                      # 2. Must match POSTGRES_USER
+      - DB_PASSWORD=your_secure_password           # 3. Must match POSTGRES_PASSWORD
+
+  mashup_postgres:
+    # ... (other configuration) ...
+    environment:
+      - POSTGRES_DB=mashup_db                      # 1. Custom database name
+      - POSTGRES_USER=postgres_user                # 2. Custom database admin user
+      - POSTGRES_PASSWORD=your_secure_password     # 3. Secure database password
 
 ```
 
-> ⚠️ **Important:** The `DB_PASSWORD` under the `mashup_bot` service **must perfectly match** the `POSTGRES_PASSWORD` defined under the `mashup_postgres` service so the containers can authenticate with each other.
+> ⚠️ **Important Security Rule:** The values for **DB_NAME**, **DB_USER**, and **DB_PASSWORD** under `mashup_bot` **must perfectly match** the **POSTGRES_DB**, **POSTGRES_USER**, and **POSTGRES_PASSWORD** values under `mashup_postgres`. If they mismatch, the bot will fail to authenticate with the database and crash on boot.
 
 ### 3. Launching the App
 
@@ -66,13 +80,12 @@ docker-compose down
 
 ## 🗄️ Database Schema
 
-The database initializes automatically using `schema.sql`. It isolates tracking metrics, tracks incoming stream indicators, and indexes search fields for high-performance link querying.
+The database initializes automatically using `schema.sql` upon the container's very first launch. It isolates tracking metrics, tracks incoming stream indicators, and indexes search fields for high-performance link querying.
 
 ---
 
 ## 📝 Commands & Administration
 
 * **`/sync`**: (Owner Only) Synchronizes application command trees globally with Discord API.
+* **`/search keyword: `**: (everyone) Searches for mashups that include the keyword or similar.
 * The bot automatically monitors incoming messages in designated `MASHUP_CHANNEL_IDS` without requiring manual trigger prefixes.
-
-```
