@@ -1,7 +1,3 @@
----
-theme: jekyll-theme-merlot
----
-
 # Spectre Music Search Bot 🎵
 
 A production-ready, containerized Discord bot built with Python (`discord.py`) and PostgreSQL. It monitors specified text channels for music links, parses streaming and YouTube metadata, and maintains a persistent database ledger of your community's track mashups and shared music.
