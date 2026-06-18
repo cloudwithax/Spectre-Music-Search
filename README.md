@@ -23,3 +23,56 @@ Clone this repository to your server, then open the `docker-compose.yml` file. Y
       - DB_NAME=mashup_db                          # Must match POSTGRES_DB below
       - DB_USER=postgres                           # Must match POSTGRES_USER below
       - DB_PASSWORD=your_secure_password           # Must match POSTGRES_PASSWORD below
+
+```
+
+> ⚠️ **Important:** The `DB_PASSWORD` under the `mashup_bot` service **must perfectly match** the `POSTGRES_PASSWORD` defined under the `mashup_postgres` service so the containers can authenticate with each other.
+
+### 3. Launching the App
+
+Ensure that `schema.sql` is in the same directory as your `docker-compose.yml` (the PostgreSQL container uses this to automatically build your tables on first boot).
+
+Run the following command in your terminal to start the services in the background:
+
+```bash
+docker-compose up -d
+
+```
+
+To view the live application logs or troubleshoot connectivity:
+
+```bash
+docker-compose logs -f mashup_bot
+
+```
+
+To stop the application:
+
+```bash
+docker-compose down
+
+```
+
+---
+
+## 🛠️ Architecture & Tech Stack
+
+* **Language:** Python 3.13
+* **Framework:** `discord.py` (v2.x)
+* **Database:** PostgreSQL 15 (Alpine-optimized container)
+* **Deployment:** Docker & Multi-container Docker Compose network
+
+---
+
+## 🗄️ Database Schema
+
+The database initializes automatically using `schema.sql`. It isolates tracking metrics, tracks incoming stream indicators, and indexes search fields for high-performance link querying.
+
+---
+
+## 📝 Commands & Administration
+
+* **`/sync`**: (Owner Only) Synchronizes application command trees globally with Discord API.
+* The bot automatically monitors incoming messages in designated `MASHUP_CHANNEL_IDS` without requiring manual trigger prefixes.
+
+```
