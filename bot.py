@@ -31,11 +31,9 @@ class MusicLedgerBot(commands.Bot):
     async def setup_hook(self):
         log.info("setup_hook: GUILD_ID=%s, _guild=%s", GUILD_ID, self._guild)
 
-        bot.tree.clear_commands(guild=None)
-        await bot.tree.sync()
-        log.info("setup_hook: Cleared and synced global tree.")
+        await self._init_database()
 
-        await bot.load_extension("cogs.media")
+        await self.load_extension("cogs.media")
         log.info("setup_hook: Loaded cogs.media.")
 
         for cmd in self.tree.get_commands():
@@ -104,13 +102,6 @@ async def on_ready():
             bot._guild.id,
             [c.name for c in guild_cmds] or "(none)",
         )
-
-    if bot._initialized:
-        log.info("on_ready: Already initialized, skipping.")
-        return
-
-    await bot._init_database()
-    log.info("on_ready: Initialization complete.")
 
 
 if __name__ == "__main__":
