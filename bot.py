@@ -56,7 +56,7 @@ class MusicLedgerBot(commands.Bot):
         log.info("[Database] Connecting to PostgreSQL database pool...")
         while True:
             try:
-                self.db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, max_size=5)
+                self.db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, min_size=1, max_size=5)
                 log.info("[Database] Successfully connected to PostgreSQL database pool!")
                 async with self.db_pool.acquire() as conn:
                     with open("schema.sql") as f:
