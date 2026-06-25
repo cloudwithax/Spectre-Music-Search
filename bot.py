@@ -8,13 +8,13 @@ from discord.ext import commands
 from config import DATABASE_URL, GUILD_ID, TARGET_CHANNEL_IDS, TOKEN
 
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
-logging.getLogger("discord").setLevel(logging.DEBUG)
-logging.getLogger("discord.http").setLevel(logging.DEBUG)
-logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
-logging.getLogger("discord.app_commands").setLevel(logging.DEBUG)
+logging.getLogger("discord").setLevel(logging.INFO)
+logging.getLogger("discord.http").setLevel(logging.INFO)
+logging.getLogger("discord.gateway").setLevel(logging.INFO)
+logging.getLogger("discord.app_commands").setLevel(logging.INFO)
 log = logging.getLogger("bot")
 
 intents = discord.Intents.default()
