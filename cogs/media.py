@@ -4,7 +4,7 @@ import re
 
 import discord
 from discord import app_commands
-from discord.ext import commands, tasks
+from discord.ext import commands
 
 from checks import is_owner
 from config import TARGET_CHANNEL_IDS
@@ -178,16 +178,6 @@ class MediaCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._sync_running = False
-        self.background_sync.add_exception_type(Exception)
-        self.background_sync.start()
-
-    async def cog_unload(self):
-        self.background_sync.cancel()
-
-    async def _count_indexed_for_message(self, conn, jump_url: str) -> int:
-        return await conn.fetchval(
-            "SELECT COUNT(*) FROM tracked_media WHERE original_message_url = $1;", jump_url
-        )
 
     @staticmethod
     def _extract_assets(message: discord.Message) -> list:
@@ -204,7 +194,7 @@ class MediaCog(commands.Cog):
                 assets.append(("FILE", attachment.url, fname))
         return assets
 
-    async def run_background_sync(self) -> tuple[int, int]:
+    async def run_full_sync(self) -> tuple[int, int]:
         synced_count = 0
         total_scanned = 0
 
@@ -213,61 +203,27 @@ class MediaCog(commands.Cog):
             if not target_channel:
                 continue
 
-            print(f"[BgSync] Now pulling historic entries from: #{target_channel.name}")
+            print(f"[Sync] Pulling all entries from: #{target_channel.name}")
 
             async for message in target_channel.history(limit=None, oldest_first=False):
                 total_scanned += 1
                 if total_scanned % 100 == 0:
                     print(
-                        f"[BgSync] Evaluated {total_scanned} context frames... Inserted {synced_count} entries."
+                        f"[Sync] Evaluated {total_scanned} messages... Inserted {synced_count} entries."
                     )
 
                 if message.author.bot:
-                    await asyncio.sleep(0.05)
                     continue
 
-                async with self.bot.db_pool.acquire() as conn:
-                    already = await self._count_indexed_for_message(conn, message.jump_url)
-
                 candidate_assets = self._extract_assets(message)
-
-                if already >= len(candidate_assets) > 0:
-                    await asyncio.sleep(0.05)
+                if not candidate_assets:
                     continue
 
                 was_logged_count = await self.process_and_save_message(message, candidate_assets)
                 synced_count += was_logged_count
-
                 await asyncio.sleep(0.1)
 
         return synced_count, total_scanned
-
-    @tasks.loop(hours=1)
-    async def background_sync(self):
-        if self._sync_running:
-            print("[BgSync] Previous hourly sync still in progress; skipping this tick.")
-            return
-        if not self.bot.is_ready() or self.bot.db_pool is None:
-            print("[BgSync] Bot not ready / DB pool unavailable; skipping this tick.")
-            return
-        if not TARGET_CHANNEL_IDS:
-            return
-
-        self._sync_running = True
-        try:
-            print("[BgSync] Hourly background sync starting...")
-            synced_count, total_scanned = await self.run_background_sync()
-            print(
-                f"[BgSync] Complete. Scanned {total_scanned} messages, inserted/updated {synced_count} entries."
-            )
-        except Exception as e:
-            print(f"[BgSync] Error during background sync: {e}")
-        finally:
-            self._sync_running = False
-
-    @background_sync.before_loop
-    async def _wait_for_ready(self):
-        await self.bot.wait_until_ready()
 
     async def process_and_save_message(
         self, message: discord.Message, assets_to_log: list | None = None
@@ -333,7 +289,7 @@ class MediaCog(commands.Cog):
         return items_saved
 
     @app_commands.command(
-        name="sync", description="Scan ALL historical messages and backfill database ledger values"
+        name="sync", description="Wipe database and re-index all historical messages from source channels"
     )
     @is_owner()
     async def sync_command(self, interaction: discord.Interaction):
@@ -343,13 +299,27 @@ class MediaCog(commands.Cog):
             await interaction.followup.send("Channel setup configuration is missing or invalid.")
             return
 
-        await interaction.followup.send("Commencing Database Sync...")
+        if self._sync_running:
+            await interaction.followup.send("⚠️ A sync operation is already in progress.")
+            return
 
-        synced_count, total_scanned = await self.run_background_sync()
+        self._sync_running = True
+        try:
+            async with self.bot.db_pool.acquire() as conn:
+                await conn.execute("DELETE FROM tracked_media;")
+                print("[Sync] Wiped tracked_media table.")
 
-        await interaction.followup.send(
-            f"✅ Database Sync Complete! Scanned {total_scanned} messages and updated **{synced_count}** entries."
-        )
+            await interaction.followup.send("🧹 Database wiped. Commencing full re-sync...")
+
+            synced_count, total_scanned = await self.run_full_sync()
+
+            await interaction.followup.send(
+                f"✅ Sync complete! Scanned **{total_scanned}** messages and indexed **{synced_count}** entries."
+            )
+        except Exception as e:
+            await interaction.followup.send(f"❌ Sync failed: `{e}`")
+        finally:
+            self._sync_running = False
 
     @sync_command.error
     async def sync_command_error(
