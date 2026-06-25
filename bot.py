@@ -1,12 +1,21 @@
 import asyncio
+import logging
 
 import asyncpg
 import discord
-from discord import app_commands
 from discord.ext import commands
 
-from checks import is_owner
 from config import DATABASE_URL, GUILD_ID, TARGET_CHANNEL_IDS, TOKEN
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger("discord").setLevel(logging.DEBUG)
+logging.getLogger("discord.http").setLevel(logging.DEBUG)
+logging.getLogger("discord.gateway").setLevel(logging.DEBUG)
+logging.getLogger("discord.app_commands").setLevel(logging.DEBUG)
+log = logging.getLogger("bot")
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -20,14 +29,37 @@ class MusicLedgerBot(commands.Bot):
         self._guild = discord.Object(id=GUILD_ID) if GUILD_ID else None
 
     async def setup_hook(self):
-        pass
+        log.info("setup_hook: GUILD_ID=%s, _guild=%s", GUILD_ID, self._guild)
+
+        bot.tree.clear_commands(guild=None)
+        await bot.tree.sync()
+        log.info("setup_hook: Cleared and synced global tree.")
+
+        await bot.load_extension("cogs.media")
+        log.info("setup_hook: Loaded cogs.media.")
+
+        for cmd in self.tree.get_commands():
+            log.info("setup_hook: Global command registered: %s", cmd.name)
+        if self._guild:
+            guild_tree = self.tree._guild_commands.get(self._guild.id)
+            if guild_tree:
+                for cmd in guild_tree.get_commands():
+                    log.info("setup_hook: Guild command registered: %s", cmd.name)
+            else:
+                log.warning("setup_hook: No guild tree found for guild %s", self._guild.id)
+
+        synced = await self.tree.sync(guild=self._guild)
+        log.info(
+            "setup_hook: Synced %d commands to guild %s: %s",
+            len(synced), GUILD_ID, [c.name for c in synced],
+        )
 
     async def _init_database(self):
-        print("[Database] Connecting to PostgreSQL database pool...")
+        log.info("[Database] Connecting to PostgreSQL database pool...")
         while True:
             try:
                 self.db_pool = await asyncpg.create_pool(dsn=DATABASE_URL, max_size=5)
-                print("[Database] Successfully connected to PostgreSQL database pool!")
+                log.info("[Database] Successfully connected to PostgreSQL database pool!")
                 async with self.db_pool.acquire() as conn:
                     with open("schema.sql") as f:
                         await conn.execute(f.read())
@@ -37,17 +69,17 @@ class MusicLedgerBot(commands.Bot):
                     await conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_content_trgm ON tracked_media USING gin (lower(message_content) gin_trgm_ops);"
                     )
-                    print("[Database] Schema initialized.")
+                    log.info("[Database] Schema initialized.")
                 self._initialized = True
                 break
             except (ConnectionRefusedError, asyncpg.exceptions.CannotConnectNowError):
-                print(
+                log.warning(
                     "[Database] PostgreSQL is initializing system components... Retrying in 2 seconds..."
                 )
                 await asyncio.sleep(2)
             except Exception as e:
-                print(f"[Database] Unexpected container runtime intersection: {e}")
-                print("[Database] Re-attempting connection sequence in 5 seconds...")
+                log.error("[Database] Unexpected error: %s", e, exc_info=True)
+                log.info("[Database] Re-attempting connection sequence in 5 seconds...")
                 await asyncio.sleep(5)
 
 
@@ -56,46 +88,33 @@ bot = MusicLedgerBot()
 
 @bot.event
 async def on_ready():
-    if bot._initialized:
-        return
-    print(f"Logged in as {bot.user}.")
-    print(
-        f"[Initialization] Successfully targeted {len(TARGET_CHANNEL_IDS)} source channels: {TARGET_CHANNEL_IDS}"
+    log.info("on_ready: bot.user=%s, _initialized=%s", bot.user, bot._initialized)
+    log.info(
+        "on_ready: Targeting %d source channels: %s",
+        len(TARGET_CHANNEL_IDS), TARGET_CHANNEL_IDS,
     )
+
+    all_global = bot.tree.get_commands()
+    log.info("on_ready: Global commands in tree: %s", [c.name for c in all_global])
+
+    if bot._guild:
+        guild_tree = bot.tree._guild_commands.get(bot._guild.id)
+        if guild_tree:
+            log.info(
+                "on_ready: Guild commands in tree: %s",
+                [c.name for c in guild_tree.get_commands()],
+            )
+        else:
+            log.warning("on_ready: No guild subtree found for %s", bot._guild.id)
+
+    if bot._initialized:
+        log.info("on_ready: Already initialized, skipping.")
+        return
+
     await bot._init_database()
-
-    bot.tree.clear_commands(guild=None)
-    await bot.tree.sync()
-    print("[Initialization] Cleared all global commands.")
-
-    await bot.load_extension("cogs.media")
-    await bot.tree.sync(guild=bot._guild)
-    print(f"[Initialization] Commands synced to guild {GUILD_ID}.")
-
-
-@bot.tree.command(
-    name="reload", description="Reload the media commands cog without restarting the bot"
-)
-@is_owner()
-async def reload_command(interaction: discord.Interaction):
-    await interaction.response.defer(ephemeral=True)
-    try:
-        await bot.reload_extension("cogs.media")
-        await bot.tree.sync(guild=bot._guild)
-        await interaction.followup.send("✅ Reloaded the `cogs.media` cog.")
-    except Exception as e:
-        await interaction.followup.send(f"❌ Failed to reload cog: `{e}`")
-
-
-@reload_command.error
-async def reload_command_error(
-    interaction: discord.Interaction, error: app_commands.AppCommandError
-):
-    if isinstance(error, app_commands.errors.CheckFailure):
-        await interaction.response.send_message(
-            "❌ You are not authorized to use this command.", ephemeral=True
-        )
+    log.info("on_ready: Initialization complete.")
 
 
 if __name__ == "__main__":
-    bot.run(TOKEN)
+    log.info("Starting bot...")
+    bot.run(TOKEN, log_level=logging.DEBUG)

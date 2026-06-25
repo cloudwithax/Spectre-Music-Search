@@ -404,6 +404,28 @@ class MediaCog(commands.Cog):
             )
 
     @app_commands.command(
+        name="reload", description="Reload the media commands cog without restarting the bot"
+    )
+    @is_owner()
+    async def reload_command(self, interaction: discord.Interaction):
+        await interaction.response.defer(ephemeral=True)
+        try:
+            await self.bot.reload_extension("cogs.media")
+            await self.bot.tree.sync(guild=self.bot._guild)
+            await interaction.followup.send("✅ Reloaded the `cogs.media` cog.")
+        except Exception as e:
+            await interaction.followup.send(f"❌ Failed to reload cog: `{e}`")
+
+    @reload_command.error
+    async def reload_command_error(
+        self, interaction: discord.Interaction, error: app_commands.AppCommandError
+    ):
+        if isinstance(error, app_commands.errors.CheckFailure):
+            await interaction.response.send_message(
+                "❌ You are not authorized to use this command.", ephemeral=True
+            )
+
+    @app_commands.command(
         name="search", description="Search all indexed assets simultaneously out of PostgreSQL"
     )
     async def search_command(self, interaction: discord.Interaction, keyword: str):
