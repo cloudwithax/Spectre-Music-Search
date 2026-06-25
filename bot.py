@@ -100,4 +100,4 @@ async def on_ready():
 
 if __name__ == "__main__":
     log.info("Starting bot...")
-    bot.run(TOKEN, log_handler=None, log_level=logging.DEBUG)
+    bot.run(TOKEN, log_handler=None, log_level=logging.INFO)
