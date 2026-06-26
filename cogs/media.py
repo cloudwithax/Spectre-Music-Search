@@ -33,11 +33,12 @@ def clean_filename(filename: str, author_fallback: str = "Unknown") -> str:
 
 
 class SearchPagination(discord.ui.View):
-    def __init__(self, keyword: str, all_results: list):
+    def __init__(self, keyword: str, all_results: list, user_filter: str | None = None):
         super().__init__(timeout=120)
         self.keyword = keyword
         self.all_results = all_results
         self.filtered_results = all_results
+        self.user_filter = user_filter
 
         self.current_page = 0
         self.per_page = 6
@@ -85,7 +86,9 @@ class SearchPagination(discord.ui.View):
 
         embed = discord.Embed(
             title=f"🔎 Unified Media Search: '{self.keyword}'",
-            description=f"Showing: **{filter_labels[self.current_filter]}**\nPage {self.current_page + 1} of {self.total_pages} ({len(self.filtered_results)} filtered matches)",
+            description=f"Showing: **{filter_labels[self.current_filter]}**"
+            + (f" • Uploaded by: **{self.user_filter}**" if self.user_filter else "")
+            + f"\nPage {self.current_page + 1} of {self.total_pages} ({len(self.filtered_results)} filtered matches)",
             color=discord.Color.blurple(),
         )
 
@@ -204,6 +207,25 @@ class MediaCog(commands.Cog):
                 assets.append(("FILE", attachment.url, fname))
         return assets
 
+    async def _process_reply_stream_assets(self, conn, message: discord.Message):
+        if not message.reference or not message.reference.message_id:
+            return
+
+        stream_links = STREAM_RE.findall(message.content)
+        if not stream_links:
+            return
+
+        try:
+            parent_msg = await message.channel.fetch_message(message.reference.message_id)
+        except (discord.NotFound, discord.HTTPException):
+            return
+
+        if parent_msg.author.bot:
+            return
+
+        parent_assets = [("STREAM", link) for link in stream_links]
+        await self.process_and_save_message(conn, parent_msg, parent_assets)
+
     async def _iter_target_channels(self):
         """Yield every messageable to scan (text channels, forum threads, etc.)."""
         for channel_id in TARGET_CHANNEL_IDS:
@@ -242,12 +264,12 @@ class MediaCog(commands.Cog):
                     continue
 
                 candidate_assets = self._extract_assets(message)
-                if not candidate_assets:
-                    continue
 
                 async with self.bot.db_pool.acquire() as conn:
-                    was_logged_count = await self.process_and_save_message(conn, message, candidate_assets)
-                synced_count += was_logged_count
+                    if candidate_assets:
+                        was_logged_count = await self.process_and_save_message(conn, message, candidate_assets)
+                        synced_count += was_logged_count
+                    await self._process_reply_stream_assets(conn, message)
                 await asyncio.sleep(0.1)
 
         return synced_count, total_scanned
@@ -269,16 +291,18 @@ class MediaCog(commands.Cog):
                 if message.author.bot:
                     continue
 
+                candidate_assets = self._extract_assets(message)
+
                 async with self.bot.db_pool.acquire() as conn:
                     already = await self._count_indexed_for_message(conn, message.jump_url)
 
-                    candidate_assets = self._extract_assets(message)
-
                     if already >= len(candidate_assets) > 0:
+                        await self._process_reply_stream_assets(conn, message)
                         continue
 
                     was_logged_count = await self.process_and_save_message(conn, message, candidate_assets)
-                synced_count += was_logged_count
+                    synced_count += was_logged_count
+                    await self._process_reply_stream_assets(conn, message)
                 await asyncio.sleep(0.1)
 
         return synced_count, total_scanned
@@ -440,40 +464,60 @@ class MediaCog(commands.Cog):
     @app_commands.command(
         name="search", description="Search all indexed assets simultaneously out of PostgreSQL"
     )
-    async def search_command(self, interaction: discord.Interaction, keyword: str):
+    @app_commands.describe(keyword="Search term to match against titles, uploaders, or message content", user="Filter results by the user who shared the track")
+    async def search_command(self, interaction: discord.Interaction, keyword: str, user: str | None = None):
         await interaction.response.defer()
 
         async with self.bot.db_pool.acquire() as conn:
-            # Lower the threshold slightly to let close fuzzy matches join the combined pool
             await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.3;")
 
-            # Combined query: pulls records matching either rule and returns them together
-            sql_query = """
-                SELECT asset_type, url, title, uploader, date_shared, original_message_url
-                FROM tracked_media
-                WHERE (lower(title) % lower($1) OR lower(uploader) % lower($1) OR lower(message_content) % lower($1))
-                   OR (lower(title) LIKE '%' || lower($1) || '%')
-                   OR (lower(uploader) LIKE '%' || lower($1) || '%')
-                   OR (lower(message_content) LIKE '%' || lower($1) || '%')
-                ORDER BY
-                    GREATEST(
-                        similarity(lower(title), lower($1)),
-                        similarity(lower(uploader), lower($1)),
-                        similarity(lower(message_content), lower($1))
-                    ) DESC
-                LIMIT 30;
-            """
-            rows = await conn.fetch(sql_query, keyword)
+            if user:
+                sql_query = """
+                    SELECT asset_type, url, title, uploader, date_shared, original_message_url
+                    FROM tracked_media
+                    WHERE (lower(uploader) = lower($2)
+                        OR lower(uploader) LIKE '%' || lower($2) || '%')
+                      AND ((lower(title) % lower($1) OR lower(uploader) % lower($1) OR lower(message_content) % lower($1))
+                        OR (lower(title) LIKE '%' || lower($1) || '%')
+                        OR (lower(uploader) LIKE '%' || lower($1) || '%')
+                        OR (lower(message_content) LIKE '%' || lower($1) || '%'))
+                    ORDER BY
+                        GREATEST(
+                            similarity(lower(title), lower($1)),
+                            similarity(lower(uploader), lower($1)),
+                            similarity(lower(message_content), lower($1))
+                        ) DESC
+                    LIMIT 30;
+                """
+                rows = await conn.fetch(sql_query, keyword, user)
+            else:
+                sql_query = """
+                    SELECT asset_type, url, title, uploader, date_shared, original_message_url
+                    FROM tracked_media
+                    WHERE (lower(title) % lower($1) OR lower(uploader) % lower($1) OR lower(message_content) % lower($1))
+                       OR (lower(title) LIKE '%' || lower($1) || '%')
+                       OR (lower(uploader) LIKE '%' || lower($1) || '%')
+                       OR (lower(message_content) LIKE '%' || lower($1) || '%')
+                    ORDER BY
+                        GREATEST(
+                            similarity(lower(title), lower($1)),
+                            similarity(lower(uploader), lower($1)),
+                            similarity(lower(message_content), lower($1))
+                        ) DESC
+                    LIMIT 30;
+                """
+                rows = await conn.fetch(sql_query, keyword)
 
         if not rows:
+            filter_msg = f" from **{user}**" if user else ""
             await interaction.followup.send(
-                f"❌ No matching tracks found across the database for '{keyword}'."
+                f"❌ No matching tracks found{filter_msg} for '{keyword}'."
             )
             return
 
         cleaned_results = [dict(row) for row in rows]
 
-        view = SearchPagination(keyword=keyword, all_results=cleaned_results)
+        view = SearchPagination(keyword=keyword, all_results=cleaned_results, user_filter=user)
         await interaction.followup.send(embed=view.get_current_page_embed(), view=view)
     
     @app_commands.command(name="latest", description="Shows the latest mashup")
