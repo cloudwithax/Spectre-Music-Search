@@ -181,6 +181,7 @@ class MediaCog(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._sync_running = False
+        self._sync_generation = 0
         self.background_sync.add_exception_type(Exception)
         self.background_sync.start()
 
@@ -249,11 +250,16 @@ class MediaCog(commands.Cog):
     async def run_full_sync(self) -> tuple[int, int]:
         synced_count = 0
         total_scanned = 0
+        gen = self._sync_generation
 
         async for target_channel in self._iter_target_channels():
             print(f"[Sync] Pulling all entries from: #{target_channel.name}")
 
             async for message in target_channel.history(limit=None, oldest_first=False):
+                if self._sync_generation != gen:
+                    print("[Sync] Superseded by a newer sync; stopping.")
+                    return synced_count, total_scanned
+
                 total_scanned += 1
                 if total_scanned % 100 == 0:
                     print(
@@ -277,11 +283,16 @@ class MediaCog(commands.Cog):
     async def run_incremental_sync(self) -> tuple[int, int]:
         synced_count = 0
         total_scanned = 0
+        gen = self._sync_generation
 
         async for target_channel in self._iter_target_channels():
             print(f"[BgSync] Checking for new entries in: #{target_channel.name}")
 
             async for message in target_channel.history(limit=None, oldest_first=False):
+                if self._sync_generation != gen:
+                    print("[BgSync] Superseded by a newer sync; stopping.")
+                    return synced_count, total_scanned
+
                 total_scanned += 1
                 if total_scanned % 100 == 0:
                     print(
@@ -319,6 +330,7 @@ class MediaCog(commands.Cog):
             return
 
         self._sync_running = True
+        gen = self._sync_generation
         try:
             print("[BgSync] Hourly incremental sync starting...")
             synced_count, total_scanned = await self.run_incremental_sync()
@@ -328,7 +340,8 @@ class MediaCog(commands.Cog):
         except Exception as e:
             print(f"[BgSync] Error during background sync: {e}")
         finally:
-            self._sync_running = False
+            if self._sync_generation == gen:
+                self._sync_running = False
 
     @background_sync.before_loop
     async def _wait_for_ready(self):
@@ -409,9 +422,12 @@ class MediaCog(commands.Cog):
             return
 
         if self._sync_running:
-            await interaction.followup.send("⚠️ A sync operation is already in progress.")
-            return
+            self._sync_generation += 1
+            self.background_sync.cancel()
+            await asyncio.sleep(1)
 
+        self._sync_generation += 1
+        gen = self._sync_generation
         self._sync_running = True
         try:
             async with self.bot.db_pool.acquire() as conn:
@@ -422,13 +438,16 @@ class MediaCog(commands.Cog):
 
             synced_count, total_scanned = await self.run_full_sync()
 
-            await interaction.followup.send(
-                f"✅ Sync complete! Scanned **{total_scanned}** messages and indexed **{synced_count}** entries."
-            )
+            if self._sync_generation == gen:
+                await interaction.followup.send(
+                    f"✅ Sync complete! Scanned **{total_scanned}** messages and indexed **{synced_count}** entries."
+                )
         except Exception as e:
-            await interaction.followup.send(f"❌ Sync failed: `{e}`")
+            if self._sync_generation == gen:
+                await interaction.followup.send(f"❌ Sync failed: `{e}`")
         finally:
-            self._sync_running = False
+            if self._sync_generation == gen:
+                self._sync_running = False
 
     @sync_command.error
     async def sync_command_error(
