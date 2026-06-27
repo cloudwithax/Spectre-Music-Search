@@ -391,14 +391,15 @@ class MediaCog(commands.Cog):
             try:
                 await conn.execute(
                     """
-                    INSERT INTO tracked_media (asset_type, url, title, uploader, date_shared, original_message_url, channel_id, message_content)
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    INSERT INTO tracked_media (asset_type, url, title, uploader, user_id, date_shared, original_message_url, channel_id, message_content)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     ON CONFLICT (original_message_url, url) DO NOTHING;
                     """,
                     label,
                     url,
                     title,
                     message.author.display_name,
+                    message.author.id,
                     date_obj,
                     message.jump_url,
                     message.channel.id,
@@ -439,12 +440,14 @@ class MediaCog(commands.Cog):
             synced_count, total_scanned = await self.run_full_sync()
 
             if self._sync_generation == gen:
-                await interaction.followup.send(
-                    f"✅ Sync complete! Scanned **{total_scanned}** messages and indexed **{synced_count}** entries."
+                await interaction.channel.send(
+                    f"✅ {interaction.user.mention} Sync complete! Scanned **{total_scanned}** messages and indexed **{synced_count}** entries."
                 )
         except Exception as e:
             if self._sync_generation == gen:
-                await interaction.followup.send(f"❌ Sync failed: `{e}`")
+                await interaction.channel.send(
+                    f"❌ {interaction.user.mention} Sync failed: `{e}`"
+                )
         finally:
             if self._sync_generation == gen:
                 self._sync_running = False
@@ -484,18 +487,20 @@ class MediaCog(commands.Cog):
         name="search", description="Search all indexed assets simultaneously out of PostgreSQL"
     )
     @app_commands.describe(keyword="Search term to match against titles, uploaders, or message content", user="Filter results by the user who shared the track")
-    async def search_command(self, interaction: discord.Interaction, keyword: str, user: str | None = None):
+    async def search_command(self, interaction: discord.Interaction, keyword: str, user: discord.User | discord.Member | None = None):
         await interaction.response.defer()
+
+        user_display = user.display_name if user else None
+        user_id = user.id if user else None
 
         async with self.bot.db_pool.acquire() as conn:
             await conn.execute("SET LOCAL pg_trgm.similarity_threshold = 0.3;")
 
-            if user:
+            if user_id:
                 sql_query = """
                     SELECT asset_type, url, title, uploader, date_shared, original_message_url
                     FROM tracked_media
-                    WHERE (lower(uploader) = lower($2)
-                        OR lower(uploader) LIKE '%' || lower($2) || '%')
+                    WHERE user_id = $2
                       AND ((lower(title) % lower($1) OR lower(uploader) % lower($1) OR lower(message_content) % lower($1))
                         OR (lower(title) LIKE '%' || lower($1) || '%')
                         OR (lower(uploader) LIKE '%' || lower($1) || '%')
@@ -508,7 +513,7 @@ class MediaCog(commands.Cog):
                         ) DESC
                     LIMIT 30;
                 """
-                rows = await conn.fetch(sql_query, keyword, user)
+                rows = await conn.fetch(sql_query, keyword, user_id)
             else:
                 sql_query = """
                     SELECT asset_type, url, title, uploader, date_shared, original_message_url
@@ -528,7 +533,7 @@ class MediaCog(commands.Cog):
                 rows = await conn.fetch(sql_query, keyword)
 
         if not rows:
-            filter_msg = f" from **{user}**" if user else ""
+            filter_msg = f" from **{user_display}**" if user_display else ""
             await interaction.followup.send(
                 f"❌ No matching tracks found{filter_msg} for '{keyword}'."
             )
@@ -536,7 +541,7 @@ class MediaCog(commands.Cog):
 
         cleaned_results = [dict(row) for row in rows]
 
-        view = SearchPagination(keyword=keyword, all_results=cleaned_results, user_filter=user)
+        view = SearchPagination(keyword=keyword, all_results=cleaned_results, user_filter=user_display)
         await interaction.followup.send(embed=view.get_current_page_embed(), view=view)
     
     @app_commands.command(name="latest", description="Shows the latest mashup")
