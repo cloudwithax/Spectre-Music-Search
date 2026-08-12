@@ -576,11 +576,6 @@ class MediaCog(commands.Cog):
 
     @app_commands.command(name="help", description="Show available bot commands")
     async def help_command(self, interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="Music Ledger Bot Commands",
-            description="Index and search shared music across channels.",
-            color=discord.Color.blurple(),
-        )
         commands_info = [
             ("/sync", "Wipe and re-index all historical messages (owner only)."),
             ("/reload", "Reload the media cog without restarting (owner only)."),
@@ -589,9 +584,26 @@ class MediaCog(commands.Cog):
             ("/ping", "Check the bot's current latency."),
             ("/help", "Show this help message."),
         ]
-        for name, value in commands_info:
-            embed.add_field(name=name, value=value, inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        can_embed = False
+        if interaction.guild and interaction.channel:
+            perms = interaction.channel.permissions_for(interaction.guild.me)
+            can_embed = perms.embed_links
+
+        if can_embed:
+            embed = discord.Embed(
+                title="Music Ledger Bot Commands",
+                description="Index and search shared music across channels.",
+                color=discord.Color.blurple(),
+            )
+            for name, value in commands_info:
+                embed.add_field(name=name, value=value, inline=False)
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+        else:
+            lines = ["**Music Ledger Bot Commands**\nIndex and search shared music across channels.\n"]
+            for name, value in commands_info:
+                lines.append(f"**{name}**\n{value}\n")
+            await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):

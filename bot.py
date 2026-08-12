@@ -23,7 +23,7 @@ intents.message_content = True
 
 class MusicLedgerBot(commands.Bot):
     def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
+        super().__init__(command_prefix="!", intents=intents, help_command=None)
         self.db_pool = None
         self._initialized = False
         self._guild = discord.Object(id=GUILD_ID) if GUILD_ID else None
